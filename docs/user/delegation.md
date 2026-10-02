@@ -13,6 +13,24 @@ environment. The same section sets how many delegates a thread may run at once,
 how deep delegates may delegate again, and how long a delegate may work before
 T3 Code stops it.
 
+## Worker profiles
+
+Profiles are named workers you set up once, like subagents in an OpenCode
+orchestrator config. Add them in **Settings → Integrations → Delegation →
+Worker profiles**. Each one has:
+
+- a name, such as `reviewer` or `explorer`
+- a description of when to use it, which agents read to choose a worker
+- the provider and model it runs on
+- read-only or write access, and whether it gets its own worktree
+- standing instructions added to every task it receives
+- an optional timeout
+
+Agents see the profiles, in the order you list them, before they delegate.
+Everything a profile sets is fixed: an agent can't give a read-only reviewer
+write access or move it to another model. To keep agents on your profiles only,
+turn on **Only delegate to profiles**.
+
 ## Ask for a delegate
 
 Ask in plain language, for example "have Codex review this diff for bugs" or
@@ -45,8 +63,8 @@ Stopping the delegating thread's turn cancels its delegates too.
   It uses the delegating thread's permission mode. Review and merge its branch
   as you would any worktree thread.
 
-The agent decides which to ask for. Say so in your request if you want to
-choose.
+The agent decides which to ask for unless the profile sets it. Say so in your
+request if you want to choose.
 
 ## Limits
 

@@ -7,6 +7,7 @@ import {
   AuthRelayWriteScope,
   AuthReviewWriteScope,
   AuthTerminalOperateScope,
+  DELEGATION_WS_METHODS,
   ORCHESTRATION_WS_METHODS,
   type AuthEnvironmentScope,
   WS_METHODS,
@@ -176,6 +177,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
+  // Fork: cross-agent delegation. See docs/fork-maintenance.md.
+  [DELEGATION_WS_METHODS.create]: AuthOrchestrationOperateScope,
+  [DELEGATION_WS_METHODS.get]: AuthOrchestrationReadScope,
+  [DELEGATION_WS_METHODS.cancel]: AuthOrchestrationOperateScope,
+  [DELEGATION_WS_METHODS.listTargets]: AuthOrchestrationReadScope,
+  [DELEGATION_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

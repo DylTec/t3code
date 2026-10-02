@@ -105,6 +105,7 @@ import {
 } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { makeDelegationRpcHandlers } from "./delegation/DelegationRpc.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
@@ -2136,7 +2137,14 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      // Fork: cross-agent delegation. See docs/fork-maintenance.md.
+      const delegationRpcHandlers = yield* makeDelegationRpcHandlers({
+        observeRpcEffect,
+        observeRpcStream,
+      });
+
       return WsRpcGroup.of({
+        ...delegationRpcHandlers,
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,

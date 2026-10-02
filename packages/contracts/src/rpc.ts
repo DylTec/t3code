@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { DelegationRpcGroup } from "./delegation.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -1600,4 +1601,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
-);
+  // Fork: cross-agent delegation. See docs/fork-maintenance.md.
+).merge(DelegationRpcGroup);

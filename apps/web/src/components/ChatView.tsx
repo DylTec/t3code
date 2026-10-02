@@ -220,6 +220,8 @@ import { RightPanelTabs } from "./RightPanelTabs";
 import { AgentsPanel } from "./AgentsPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
+// Fork: cross-agent delegation. See docs/fork-maintenance.md.
+import { useDelegationBannerItems } from "./delegation/useDelegationBannerItems";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
@@ -6508,6 +6510,8 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [feedbackSubmissions, routeThreadKey],
   );
+  // Fork: cross-agent delegation. See docs/fork-maintenance.md.
+  const delegationBannerItems = useDelegationBannerItems(activeThreadRef);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
@@ -6525,6 +6529,7 @@ export default function ChatView(props: ChatViewProps) {
         ...projectCloneItems,
         ...systemComposerBannerItems,
         ...backgroundLivenessItems,
+        ...delegationBannerItems,
         ...resumeCompactionItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
@@ -6536,6 +6541,7 @@ export default function ChatView(props: ChatViewProps) {
       ...projectCloneItems,
       ...systemComposerBannerItems,
       ...backgroundLivenessItems,
+      ...delegationBannerItems,
       ...resumeCompactionItems,
       ...wokeThreadItems,
       {
@@ -6581,6 +6587,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeBranchMismatchKey,
     backgroundLivenessBannerItem,
+    delegationBannerItems,
     feedbackBannerItems,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,

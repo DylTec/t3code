@@ -151,6 +151,10 @@
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"
     },
+    "./state/delegation": {
+      "types": "./src/state/delegation.ts",
+      "default": "./src/state/delegation.ts"
+    },
     "./state/device": {
       "types": "./src/state/device.ts",
       "default": "./src/state/device.ts"

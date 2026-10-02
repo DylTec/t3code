@@ -1,3 +1,5 @@
+// Fork: cross-agent delegation. See docs/fork-maintenance.md.
+import { DelegationSettingsSection } from "../delegation/DelegationSettingsSection";
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -1456,6 +1458,7 @@ export function IntegrationsSettingsPanel() {
         )}
       </SettingsSection>
       <DeviceIntegrationSettings />
+      <DelegationSettingsSection />
     </SettingsPageContainer>
   );
 }

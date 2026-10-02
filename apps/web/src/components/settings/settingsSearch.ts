@@ -576,6 +576,35 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
     searchTerms: ["allow disable enable open drive preview tools sessions project override"],
   },
+  // Fork: cross-agent delegation. See docs/fork-maintenance.md.
+  {
+    id: "delegation",
+    title: "Delegation",
+    to: "/settings/integrations",
+    scope: "environment-defaults",
+    searchTerms: ["delegate agents subagent hand off codex claude opencode another provider mcp"],
+  },
+  {
+    id: "delegation-concurrency",
+    title: "Delegates per thread",
+    to: "/settings/integrations",
+    scope: "environment-defaults",
+    searchTerms: ["delegation concurrent parallel limit"],
+  },
+  {
+    id: "delegation-depth",
+    title: "Delegation depth",
+    to: "/settings/integrations",
+    scope: "environment-defaults",
+    searchTerms: ["delegation nested recursive limit"],
+  },
+  {
+    id: "delegation-timeout",
+    title: "Delegate timeout",
+    to: "/settings/integrations",
+    scope: "environment-defaults",
+    searchTerms: ["delegation minutes stop deadline"],
+  },
   {
     id: "device-hosts",
     title: "Device hosts",

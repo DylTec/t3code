@@ -100,10 +100,11 @@ describe("resolveChoice", () => {
   it("takes provider, model, access and timeout from the profile and names the role after it", () => {
     const choice = DelegationPolicy.resolveChoice({ profile: "Reviewer" }, settings);
     expect(choice).toMatchObject({
-      provider: "codex",
+      providers: ["codex"],
       model: "codex-other",
       access: "read-only",
       role: "reviewer",
+      standardRole: "reviewer",
       timeoutMinutes: 30,
       profile: { instructions: "Report findings by severity." },
     });
@@ -115,7 +116,7 @@ describe("resolveChoice", () => {
       settings,
     );
     expect(choice).toMatchObject({
-      provider: "claude",
+      providers: ["claude"],
       model: "claude-big",
       access: "write",
       role: "migrator",
@@ -135,7 +136,7 @@ describe("resolveChoice", () => {
     // Restating the profile's own values is fine.
     expect(
       DelegationPolicy.resolveChoice({ profile: "reviewer", provider: "Codex" }, settings),
-    ).toMatchObject({ provider: "codex" });
+    ).toMatchObject({ providers: ["codex"] });
   });
 
   it("lists the profiles when a name is unknown or a profile is required", () => {
@@ -155,10 +156,111 @@ describe("resolveChoice", () => {
     const choice = DelegationPolicy.resolveChoice({}, settings);
     expect(DelegationPolicy.isDelegationError(choice) && choice.code).toBe("invalid_request");
     expect(DelegationPolicy.resolveChoice({ provider: "codex" }, settings)).toMatchObject({
-      provider: "codex",
+      providers: ["codex"],
       profile: null,
       role: null,
     });
+  });
+});
+
+describe("standard roles", () => {
+  const settings = decodeSettings({
+    enabled: true,
+    roles: { researcher: { preferredProviders: [] } },
+  });
+
+  it("recognizes standard roles by name or common alias", () => {
+    expect(DelegationPolicy.standardRoleOf("Security Reviewer")).toBe("security-reviewer");
+    expect(DelegationPolicy.standardRoleOf("test_author")).toBe("test-author");
+    expect(DelegationPolicy.standardRoleOf("tester")).toBe("test-author");
+    expect(DelegationPolicy.standardRoleOf("release-manager")).toBeNull();
+  });
+
+  it("fills access and preferred providers from the role when the request leaves them out", () => {
+    expect(DelegationPolicy.resolveChoice({ role: "Reviewer" }, settings)).toMatchObject({
+      providers: ["codex", "claudeAgent"],
+      access: "read-only",
+      role: "reviewer",
+      standardRole: "reviewer",
+    });
+    expect(DelegationPolicy.resolveChoice({ role: "implementer" }, settings)).toMatchObject({
+      access: "write",
+    });
+  });
+
+  it("lets the request override a role's defaults", () => {
+    expect(
+      DelegationPolicy.resolveChoice(
+        { role: "implementer", provider: "opencode", access: "read-only" },
+        settings,
+      ),
+    ).toMatchObject({ providers: ["opencode"], access: "read-only", standardRole: "implementer" });
+  });
+
+  it("keeps other roles as plain labels that need a provider", () => {
+    expect(
+      DelegationPolicy.resolveChoice({ role: "release-manager", provider: "codex" }, settings),
+    ).toMatchObject({ role: "release-manager", standardRole: null, access: undefined });
+    const missing = DelegationPolicy.resolveChoice({ role: "release-manager" }, settings);
+    expect(DelegationPolicy.isDelegationError(missing) && missing.detail).toContain(
+      "standard role",
+    );
+    const empty = DelegationPolicy.resolveChoice({ role: "researcher" }, settings);
+    expect(DelegationPolicy.isDelegationError(empty) && empty.detail).toContain(
+      "no preferred providers",
+    );
+  });
+
+  it("tells the delegate how its role works", () => {
+    const prompt = DelegationPolicy.buildChildPrompt({
+      task: "Review the diff.",
+      role: "reviewer",
+      standardRole: "reviewer",
+      access: "read-only",
+      workspaceMode: "current",
+      parentThreadTitle: "OAuth",
+      parentProvider: null,
+    });
+    expect(prompt).toContain("How to work: Review; do not fix.");
+  });
+});
+
+describe("pickProvider", () => {
+  const signedOutCodex = makeProvider("codex", "codex", { auth: { status: "unauthenticated" } });
+  const anyAllowed = () => true;
+
+  it("takes the first preferred provider that can take work", () => {
+    expect(
+      DelegationPolicy.pickProvider(
+        ["codex", "claude"],
+        [signedOutCodex, claudeProvider],
+        anyAllowed,
+      ),
+    ).toBe(claudeProvider);
+  });
+
+  it("skips preferences the user's allowed targets rule out", () => {
+    const noCodex = (provider: { driver: string }) => provider.driver !== "codex";
+    expect(
+      DelegationPolicy.pickProvider(["codex", "claude"], [codexProvider, claudeProvider], noCodex),
+    ).toBe(claudeProvider);
+    // A lone explicit choice is returned for admission to refuse with its own reason.
+    expect(DelegationPolicy.pickProvider(["codex"], [codexProvider], noCodex)).toBe(codexProvider);
+  });
+
+  it("explains each preference when none can take work", () => {
+    const result = DelegationPolicy.pickProvider(
+      ["codex", "opencode"],
+      [signedOutCodex],
+      anyAllowed,
+    );
+    expect(DelegationPolicy.isDelegationError(result) && result.code).toBe("provider_unavailable");
+    expect(DelegationPolicy.isDelegationError(result) && result.detail).toContain(
+      "codex: Provider 'codex' cannot take work: The provider is not signed in.",
+    );
+    // A single candidate keeps its specific error.
+    const lone = DelegationPolicy.pickProvider(["gemini"], [codexProvider], anyAllowed);
+    expect(DelegationPolicy.isDelegationError(lone) && lone.code).toBe("provider_not_found");
   });
 });
 

@@ -5,11 +5,15 @@
  */
 import * as Schema from "effect/Schema";
 import {
+  DELEGATION_ROLE_DESCRIPTIONS,
+  DELEGATION_ROLES,
   DEFAULT_MODEL_BY_PROVIDER,
   type DelegationAccess,
   DelegationError,
   type DelegationProfile,
   type DelegationProfileTarget,
+  type DelegationRole,
+  type DelegationRoleTarget,
   type DelegationSettings,
   type DelegationTarget,
   type DelegationWorkspaceMode,
@@ -128,26 +132,53 @@ export interface DelegationChoice {
   readonly timeoutMinutes?: number | undefined;
 }
 
+const ROLE_ALIASES: Readonly<Record<string, DelegationRole>> = {
+  review: "reviewer",
+  "code-reviewer": "reviewer",
+  research: "researcher",
+  debug: "debugger",
+  tester: "test-author",
+  "test-writer": "test-author",
+  security: "security-reviewer",
+  performance: "performance-reviewer",
+  "perf-reviewer": "performance-reviewer",
+};
+
+/** The standard role a free-text role names, if any: `Security Reviewer` → `security-reviewer`. */
+export function standardRoleOf(role: string | null): DelegationRole | null {
+  if (role === null) return null;
+  const slug = role
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[\s_]+/g, "-");
+  return DELEGATION_ROLES.find((standard) => standard === slug) ?? ROLE_ALIASES[slug] ?? null;
+}
+
 export interface ResolvedChoice {
   readonly profile: DelegationProfile | null;
-  readonly provider: string;
+  /** Providers to try in order; the first that can take work runs the task. */
+  readonly providers: ReadonlyArray<string>;
   readonly model: string | undefined;
   readonly access: DelegationAccess | undefined;
   readonly workspace: DelegationWorkspaceMode | undefined;
+  /** The label shown in T3; a standard role's canonical name when one matched. */
   readonly role: string | null;
+  readonly standardRole: DelegationRole | null;
   readonly timeoutMinutes: number | undefined;
 }
 
 /**
- * Apply the named profile to a request. Every field the profile sets is fixed:
- * a request that names a different value is refused rather than silently
- * overridden, so an agent cannot widen a read-only worker's access.
+ * Work out who runs a request and with what defaults. Precedence, highest
+ * first: the request, the named profile, the standard role, global defaults.
+ * Every field a profile sets is fixed: a request that names a different value
+ * is refused rather than silently overridden, so an agent cannot widen a
+ * read-only worker's access. A role's defaults are only defaults.
  */
 export function resolveChoice(
   request: DelegationChoice,
   settings: DelegationSettings,
 ): ResolvedChoice | DelegationError {
-  const role = request.role?.trim() || null;
+  const label = request.role?.trim() || null;
   if (request.profile === undefined) {
     if (settings.requireProfile) {
       return new DelegationError({
@@ -155,19 +186,29 @@ export function resolveChoice(
         detail: `T3 Code settings only allow delegating to a profile. ${profileMenu(settings.profiles)}`,
       });
     }
-    if (request.provider === undefined) {
+    const standardRole = standardRoleOf(label);
+    const roleDefaults = standardRole === null ? null : settings.roles[standardRole];
+    const providers =
+      request.provider !== undefined
+        ? [request.provider]
+        : (roleDefaults?.preferredProviders ?? []);
+    if (providers.length === 0) {
       return new DelegationError({
         code: "invalid_request",
-        detail: `Name a profile or a provider. ${profileMenu(settings.profiles)}`,
+        detail:
+          standardRole === null
+            ? `Name a profile, a provider, or a standard role (${DELEGATION_ROLES.join(", ")}). ${profileMenu(settings.profiles)}`
+            : `The ${standardRole} role has no preferred providers in T3 Code settings. Name a provider.`,
       });
     }
     return {
       profile: null,
-      provider: request.provider,
+      providers,
       model: request.model,
-      access: request.access,
+      access: request.access ?? roleDefaults?.access,
       workspace: request.workspace,
-      role,
+      role: standardRole ?? label,
+      standardRole,
       timeoutMinutes: request.timeoutMinutes,
     };
   }
@@ -199,14 +240,67 @@ export function resolveChoice(
       detail: `Profile '${profile.name}' fixes ${conflicts.join(", ")}. Omit ${conflicts.length === 1 ? "it" : "them"}, or choose another profile.`,
     });
   }
+  const role = label ?? profile.name;
+  const standardRole = standardRoleOf(role);
   return {
     profile,
-    provider: profile.provider,
+    providers: [profile.provider],
     model: profile.model ?? request.model,
     access: profile.access,
     workspace: profile.workspace ?? request.workspace,
-    role: role ?? profile.name,
+    role: standardRole ?? role,
+    standardRole,
     timeoutMinutes: request.timeoutMinutes ?? profile.timeoutMinutes ?? undefined,
+  };
+}
+
+/**
+ * The first candidate that can take work. With several candidates (a role's
+ * preferences), one the user's `allowedTargets` rules out is skipped; a lone
+ * candidate is returned so admission can refuse it with its own reason.
+ */
+export function pickProvider(
+  candidates: ReadonlyArray<string>,
+  providers: ReadonlyArray<ServerProvider>,
+  isAllowed: (provider: ServerProvider) => boolean,
+): ServerProvider | DelegationError {
+  const resolved = candidates.map((candidate) => resolveTargetProvider(candidate, providers));
+  const usable = resolved.filter((result): result is ServerProvider => !isDelegationError(result));
+  const first = usable.find(isAllowed) ?? (candidates.length === 1 ? usable[0] : undefined);
+  if (first !== undefined) return first;
+  if (candidates.length === 1) return resolved[0]!;
+  const reasons = candidates.map((candidate, index) => {
+    const result = resolved[index]!;
+    return `${candidate}: ${isDelegationError(result) ? result.detail : "not allowed by T3 Code settings"}`;
+  });
+  return new DelegationError({
+    code: "provider_unavailable",
+    detail: `None of the preferred providers can take work. ${reasons.join("; ")}. Name another provider.`,
+  });
+}
+
+/** A standard role with the instance its preferences pick right now. */
+export function toRoleTarget(
+  role: DelegationRole,
+  settings: DelegationSettings,
+  providers: ReadonlyArray<ServerProvider>,
+): DelegationRoleTarget {
+  const defaults = settings.roles[role];
+  const picked =
+    defaults.preferredProviders.length === 0
+      ? null
+      : pickProvider(defaults.preferredProviders, providers, () => true);
+  return {
+    name: role,
+    description: DELEGATION_ROLE_DESCRIPTIONS[role],
+    ...defaults,
+    providerInstanceId: picked === null || isDelegationError(picked) ? null : picked.instanceId,
+    unavailableReason:
+      picked === null
+        ? "No preferred providers; name one."
+        : isDelegationError(picked)
+          ? picked.detail
+          : null,
   };
 }
 
@@ -319,9 +413,30 @@ export function childThreadTitle(role: string | null, task: string): string {
  * and asks for a self-contained final answer, because that one message is all
  * the parent receives.
  */
+/** How each standard role should work and report, added to the delegate's prompt. */
+const ROLE_GUIDANCE: Record<DelegationRole, string> = {
+  implementer:
+    "Make the change, keep it scoped to the task, and run the relevant checks. Report what you changed and how you verified it.",
+  reviewer:
+    "Review; do not fix. Report each finding with its severity, file path and line, and why it matters. If you find nothing, say so plainly.",
+  researcher:
+    "Cite a source for every claim (a URL or a file path) and keep facts separate from inference.",
+  debugger:
+    "Reproduce the failure before explaining it. Report the root cause with evidence and the smallest fix. You may edit this worktree to investigate.",
+  "test-author":
+    "Write tests that would fail without the behavior they cover. Run them and report the actual results.",
+  "security-reviewer":
+    "Do not change code. Report each vulnerability with its severity, file path and line, how it could be exploited, and a fix.",
+  architect:
+    "Compare at least two approaches with their trade-offs, then recommend one and say why.",
+  "performance-reviewer":
+    "Back every finding with a measurement or a concrete cost argument, with file path and line.",
+};
+
 export function buildChildPrompt(input: {
   readonly task: string;
   readonly role: string | null;
+  readonly standardRole?: DelegationRole | null | undefined;
   readonly access: DelegationAccess;
   readonly workspaceMode: DelegationWorkspaceMode;
   readonly parentThreadTitle: string;
@@ -344,6 +459,7 @@ export function buildChildPrompt(input: {
     `You were delegated a task by ${delegator}.`,
     "",
     ...(input.role === null ? [] : [`Role: ${input.role}`]),
+    ...(input.standardRole ? [`How to work: ${ROLE_GUIDANCE[input.standardRole]}`] : []),
     `Access: ${access}`,
     `Workspace: ${workspace}`,
     "",

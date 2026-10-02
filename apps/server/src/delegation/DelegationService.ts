@@ -14,6 +14,7 @@
 import {
   ApprovalRequestId,
   CommandId,
+  DELEGATION_ROLES,
   type Delegation,
   type DelegationAccess,
   DelegationError,
@@ -528,7 +529,16 @@ export const make = Effect.gen(function* () {
       const choice = DelegationPolicy.resolveChoice(request, settings);
       if (DelegationPolicy.isDelegationError(choice)) return yield* Effect.fail(choice);
       const providerSnapshots = yield* providers.getProviders;
-      const target = DelegationPolicy.resolveTargetProvider(choice.provider, providerSnapshots);
+      const parentDriver = parentDriverOf(
+        parent,
+        new Map(providerSnapshots.map((provider) => [provider.instanceId, provider])),
+      );
+      const allowed = parentDriver === null ? undefined : settings.allowedTargets[parentDriver];
+      const target = DelegationPolicy.pickProvider(
+        choice.providers,
+        providerSnapshots,
+        (candidate) => allowed === undefined || allowed.includes(candidate.driver),
+      );
       if (DelegationPolicy.isDelegationError(target)) return yield* Effect.fail(target);
       const model = DelegationPolicy.resolveModel(target, choice.model);
       if (DelegationPolicy.isDelegationError(model)) return yield* Effect.fail(model);
@@ -553,10 +563,7 @@ export const make = Effect.gen(function* () {
                 ).length;
           const refused = DelegationPolicy.checkAdmission({
             settings,
-            parentDriver: parentDriverOf(
-              parent,
-              new Map(providerSnapshots.map((provider) => [provider.instanceId, provider])),
-            ),
+            parentDriver,
             targetDriver: target.driver,
             childDepth: depth,
             access,
@@ -575,7 +582,10 @@ export const make = Effect.gen(function* () {
             parentThreadId: parent.id,
             parentTurnId,
             childThreadId: ThreadId.make(yield* uuid),
-            requestedProvider: choice.provider,
+            requestedProvider:
+              choice.providers.length === 1
+                ? choice.providers[0]!
+                : `${choice.standardRole ?? "role"} preference`,
             providerInstanceId: target.instanceId,
             driver: target.driver,
             model,
@@ -666,6 +676,7 @@ export const make = Effect.gen(function* () {
               parentThreadTitle: parent.title,
               parentProvider: parentProviderName,
               instructions: choice.profile?.instructions,
+              standardRole: choice.standardRole,
             }),
             attachments: [],
           },
@@ -774,6 +785,9 @@ export const make = Effect.gen(function* () {
       requireProfile: settings.requireProfile,
       profiles: settings.profiles.map((profile) =>
         DelegationPolicy.toProfileTarget(profile, snapshots),
+      ),
+      roles: DELEGATION_ROLES.map((role) =>
+        DelegationPolicy.toRoleTarget(role, settings, snapshots),
       ),
       providers: snapshots.map(DelegationPolicy.toDelegationTarget),
     })),

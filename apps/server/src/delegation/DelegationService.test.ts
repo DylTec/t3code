@@ -7,6 +7,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -291,6 +292,46 @@ describe("DelegationService", () => {
               timeoutMinutes: null,
             },
           ],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("routes a standard role to its preferred provider with the role's defaults", () =>
+    Effect.gen(function* () {
+      yield* setupParent();
+      const service = yield* DelegationService;
+      const review = yield* service.delegate(request({ provider: undefined, role: "Reviewer" }));
+      assert.strictEqual(review.role, "reviewer");
+      assert.strictEqual(review.providerInstanceId, "codex");
+      assert.strictEqual(review.access, "read-only");
+
+      const snapshots = yield* ProjectionSnapshotQuery;
+      const child = Option.getOrThrow(yield* snapshots.getThreadDetailById(review.childThreadId));
+      assert.include(child.messages[0]?.text ?? "", "How to work: Review; do not fix.");
+
+      // The implementer role defaults to write access in its own worktree.
+      const change = yield* service.delegate(
+        request({ provider: undefined, role: "implementer", executionMode: "background" }),
+      );
+      assert.strictEqual(change.access, "write");
+      assert.strictEqual(change.workspaceMode, "worktree");
+      assert.strictEqual(change.providerInstanceId, "claudeAgent");
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("skips a role's preferred provider the parent may not delegate to", () =>
+    Effect.gen(function* () {
+      yield* setupParent();
+      const service = yield* DelegationService;
+      const review = yield* service.delegate(request({ provider: undefined, role: "reviewer" }));
+      assert.strictEqual(review.providerInstanceId, "claudeAgent");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          allowedTargets: {
+            [ProviderDriverKind.make("claudeAgent")]: [ProviderDriverKind.make("claudeAgent")],
+          },
         }),
       ),
     ),

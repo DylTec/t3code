@@ -1,4 +1,6 @@
 import {
+  DELEGATION_ROLE_DESCRIPTIONS,
+  DELEGATION_ROLES,
   DelegationAccess,
   DelegationError,
   DelegationExecutionMode,
@@ -28,6 +30,10 @@ const MaxWaitSeconds = Schema.Int.check(
   description: `How long to wait for the delegate before returning its current state, in seconds (default ${DEFAULT_MAX_WAIT_SECONDS}, max ${MAX_WAIT_SECONDS}). A delegate still running when this passes keeps running; call wait_for_delegation to keep waiting.`,
 });
 
+const STANDARD_ROLES = DELEGATION_ROLES.map(
+  (role) => `${role} (${DELEGATION_ROLE_DESCRIPTIONS[role]})`,
+).join("; ");
+
 const DelegationIdInput = TrimmedNonEmptyString.annotate({
   description: "The delegationId returned by delegate_agent.",
 });
@@ -42,7 +48,7 @@ const DelegateAgentInput = Schema.Struct({
   provider: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "Only when no profile fits: a providerInstanceId from list_delegation_targets, or a driver kind such as codex, claudeAgent (or claude), opencode, cursor. Prefer a different provider than your own for independent review.",
+        "Optional with a profile or a standard role. Otherwise a providerInstanceId from list_delegation_targets, or a driver kind such as codex, claudeAgent (or claude), opencode, cursor. Overrides a standard role's preferred providers. Prefer a different provider than your own for independent review.",
     }),
   ),
   task: TrimmedNonEmptyString.annotate({
@@ -51,7 +57,7 @@ const DelegateAgentInput = Schema.Struct({
   }),
   role: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description: "Short role label shown in T3 Code, such as reviewer, researcher, or tester.",
+      description: `What the delegate is for. A standard role sets default access, picks the role's preferred provider when you name none, and tells the delegate how to work and report: ${STANDARD_ROLES}. Any other value is only a label shown in T3 Code.`,
     }),
   ),
   model: Schema.optional(
@@ -143,6 +149,17 @@ const DelegationProfileEntry = Schema.Struct({
   unavailableReason: Schema.NullOr(Schema.String),
 });
 
+const DelegationRoleEntry = Schema.Struct({
+  name: Schema.String,
+  description: Schema.String,
+  access: DelegationAccess,
+  preferredProviders: Schema.Array(Schema.String),
+  providerInstanceId: Schema.NullOr(Schema.String).annotate({
+    description: "The instance this role would use now when no provider is named.",
+  }),
+  unavailableReason: Schema.NullOr(Schema.String),
+});
+
 const ListDelegationTargetsResult = Schema.Struct({
   enabled: Schema.Boolean.annotate({
     description: "False when the user has delegation turned off; delegate_agent will refuse.",
@@ -151,12 +168,13 @@ const ListDelegationTargetsResult = Schema.Struct({
     description: "True when delegations must name a profile rather than a provider.",
   }),
   profiles: Schema.Array(DelegationProfileEntry),
+  roles: Schema.Array(DelegationRoleEntry),
   providers: Schema.Array(DelegationTargetEntry),
 });
 export type ListDelegationTargetsResult = typeof ListDelegationTargetsResult.Type;
 
 const DelegateAgentTool = Tool.make("delegate_agent", {
-  description: `Delegate a task to another coding agent (Codex, Claude Code, OpenCode, ...) managed by T3 Code. The delegate runs in its own T3 Code thread the user can watch, using that provider's own sign-in and subscription. Use it for an independent review of your changes, a second opinion, research, or parallel work. Call list_delegation_targets first and pick the worker profile whose description fits the work; name a provider only when no profile fits. By default it blocks until the delegate finishes and returns its final message. ${UNTRUSTED_RESULT}`,
+  description: `Delegate a task to another coding agent (Codex, Claude Code, OpenCode, ...) managed by T3 Code. The delegate runs in its own T3 Code thread the user can watch, using that provider's own sign-in and subscription. Use it for an independent review of your changes, a second opinion, research, or parallel work. Call list_delegation_targets first. Pick the worker profile whose description fits the work; otherwise give a standard role and let T3 choose its preferred provider, or name a provider yourself. By default it blocks until the delegate finishes and returns its final message. ${UNTRUSTED_RESULT}`,
   parameters: DelegateAgentInput,
   success: DelegationToolResult,
   failure: DelegationError,
@@ -226,7 +244,7 @@ const CancelDelegationTool = Tool.make("cancel_delegation", {
 
 const ListDelegationTargetsTool = Tool.make("list_delegation_targets", {
   description:
-    "List the worker profiles the user set up, each with when to use it and the provider, model and access it runs with, followed by the provider instances this thread can delegate to and their models. Call this before delegating.",
+    "List the worker profiles the user set up (when to use each, and the provider, model and access it runs with), the standard roles with their default access and the provider each would use now, and the provider instances this thread can delegate to with their models. Call this before delegating.",
   success: ListDelegationTargetsResult,
   failure: DelegationError,
   dependencies,

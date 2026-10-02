@@ -114,6 +114,90 @@ const DelegationLimit = (fallback: number, maximum: number) =>
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
 
+/** Standard roles (design doc Phase 3). Other role names are plain labels without defaults. */
+export const DELEGATION_ROLES = [
+  "implementer",
+  "reviewer",
+  "researcher",
+  "debugger",
+  "test-author",
+  "security-reviewer",
+  "architect",
+  "performance-reviewer",
+] as const;
+export type DelegationRole = (typeof DELEGATION_ROLES)[number];
+
+/** What each standard role is for; agents read these to choose one. */
+export const DELEGATION_ROLE_DESCRIPTIONS: Record<DelegationRole, string> = {
+  implementer: "Makes a scoped code change in its own worktree.",
+  reviewer: "Reviews changes for correctness, regressions and missing cases.",
+  researcher: "Answers a question from documentation, the web and the codebase, citing sources.",
+  debugger: "Finds the root cause of a failure, reproducing it in its own worktree.",
+  "test-author": "Writes or extends tests in its own worktree.",
+  "security-reviewer": "Reviews for vulnerabilities, unsafe input handling and secrets exposure.",
+  architect: "Evaluates a design or approach and recommends one, with trade-offs.",
+  "performance-reviewer": "Finds performance problems and backs each one with evidence.",
+};
+
+/** A standard role's defaults. Requests may override either one. */
+export const DelegationRoleSettings = Schema.Struct({
+  access: DelegationAccess,
+  /** Tried in order when a request names no provider; instance ids or driver kinds. */
+  preferredProviders: Schema.Array(TrimmedNonEmptyString),
+});
+export type DelegationRoleSettings = typeof DelegationRoleSettings.Type;
+
+export const DEFAULT_DELEGATION_ROLE_SETTINGS: Record<DelegationRole, DelegationRoleSettings> = {
+  implementer: { access: "write", preferredProviders: ["claudeAgent", "codex"] },
+  reviewer: { access: "read-only", preferredProviders: ["codex", "claudeAgent"] },
+  researcher: { access: "read-only", preferredProviders: ["opencode", "claudeAgent"] },
+  debugger: { access: "write", preferredProviders: ["codex", "claudeAgent"] },
+  "test-author": { access: "write", preferredProviders: ["codex", "claudeAgent"] },
+  "security-reviewer": { access: "read-only", preferredProviders: ["claudeAgent", "codex"] },
+  architect: { access: "read-only", preferredProviders: ["claudeAgent", "codex"] },
+  "performance-reviewer": { access: "read-only", preferredProviders: ["codex", "claudeAgent"] },
+};
+
+/** Each field defaults on its own, so a hand-edited role may set just one of them. */
+const roleField = (role: DelegationRole) => {
+  const defaults = DEFAULT_DELEGATION_ROLE_SETTINGS[role];
+  return Schema.Struct({
+    access: DelegationAccess.pipe(Schema.withDecodingDefault(Effect.succeed(defaults.access))),
+    preferredProviders: Schema.Array(TrimmedNonEmptyString).pipe(
+      Schema.withDecodingDefault(Effect.succeed(defaults.preferredProviders)),
+    ),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+};
+
+const DelegationRolesSettings = Schema.Struct({
+  implementer: roleField("implementer"),
+  reviewer: roleField("reviewer"),
+  researcher: roleField("researcher"),
+  debugger: roleField("debugger"),
+  "test-author": roleField("test-author"),
+  "security-reviewer": roleField("security-reviewer"),
+  architect: roleField("architect"),
+  "performance-reviewer": roleField("performance-reviewer"),
+});
+
+const roleFieldPatch = Schema.optionalKey(
+  Schema.Struct({
+    access: Schema.optionalKey(DelegationAccess),
+    preferredProviders: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  }),
+);
+
+const DelegationRolesSettingsPatch = Schema.Struct({
+  implementer: roleFieldPatch,
+  reviewer: roleFieldPatch,
+  researcher: roleFieldPatch,
+  debugger: roleFieldPatch,
+  "test-author": roleFieldPatch,
+  "security-reviewer": roleFieldPatch,
+  architect: roleFieldPatch,
+  "performance-reviewer": roleFieldPatch,
+});
+
 const DelegationProfileName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(40),
   Schema.isPattern(/^[a-z0-9][a-z0-9_-]*$/),
@@ -167,6 +251,8 @@ export const DelegationSettings = Schema.Struct({
   profiles: Schema.Array(DelegationProfile).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Only profiles may be delegated to, never a provider named directly. */
   requireProfile: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Defaults for the standard roles. A patch merges per role and field. */
+  roles: DelegationRolesSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type DelegationSettings = typeof DelegationSettings.Type;
 
@@ -190,6 +276,7 @@ export const DelegationSettingsPatch = Schema.Struct({
   ),
   profiles: Schema.optionalKey(Schema.Array(DelegationProfile)),
   requireProfile: Schema.optionalKey(Schema.Boolean),
+  roles: Schema.optionalKey(DelegationRolesSettingsPatch),
 });
 export type DelegationSettingsPatch = typeof DelegationSettingsPatch.Type;
 
@@ -247,11 +334,22 @@ export const DelegationProfileTarget = Schema.Struct({
 });
 export type DelegationProfileTarget = typeof DelegationProfileTarget.Type;
 
-/** What a thread may delegate to: the user's profiles first, then raw providers. */
+/** A standard role with the provider instance its preferences resolve to right now. */
+export const DelegationRoleTarget = Schema.Struct({
+  name: Schema.Literals(DELEGATION_ROLES),
+  description: Schema.String,
+  ...DelegationRoleSettings.fields,
+  providerInstanceId: Schema.NullOr(ProviderInstanceId),
+  unavailableReason: Schema.NullOr(Schema.String),
+});
+export type DelegationRoleTarget = typeof DelegationRoleTarget.Type;
+
+/** What a thread may delegate to: the user's profiles, the standard roles, then raw providers. */
 export const DelegationTargets = Schema.Struct({
   enabled: Schema.Boolean,
   requireProfile: Schema.Boolean,
   profiles: Schema.Array(DelegationProfileTarget),
+  roles: Schema.Array(DelegationRoleTarget),
   providers: Schema.Array(DelegationTarget),
 });
 export type DelegationTargets = typeof DelegationTargets.Type;

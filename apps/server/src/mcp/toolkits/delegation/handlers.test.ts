@@ -93,6 +93,7 @@ const makeHarness = Effect.fn("makeDelegationToolkitHarness")(function* (
           unavailableReason: null,
         },
       ],
+      roles: [],
       providers: [],
     }),
   });

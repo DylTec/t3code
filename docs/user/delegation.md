@@ -13,6 +13,23 @@ environment. The same section sets how many delegates a thread may run at once,
 how deep delegates may delegate again, and how long a delegate may work before
 T3 Code stops it.
 
+## Roles
+
+Agents can ask for a delegate by role instead of naming a provider. T3 Code has
+eight standard roles: implementer, reviewer, researcher, debugger, test-author,
+security-reviewer, architect and performance-reviewer.
+
+Each role has a default access level and an ordered list of preferred
+providers. When an agent gives a role and no provider, the first preferred
+provider that is signed in and allowed takes the task. The delegate is also told
+how that role should work and report. For example, a reviewer reports findings
+by severity and doesn't fix them. Agents can still name a provider or access
+level themselves.
+
+By default, implementer, debugger and test-author get write access in their own
+worktree. The other roles are read-only. Change a role's access or providers in
+**Settings → Integrations → Delegation → Delegation roles**.
+
 ## Worker profiles
 
 Profiles are named workers you set up once, like subagents in an OpenCode

@@ -73,7 +73,7 @@ edit, update this table in the same commit.
 | `packages/client-runtime/src/rpc/client.ts`                 | Add `delegation.subscribeThread` to `EnvironmentSubscriptionRpcTag`  | Subscription atoms accept only listed stream RPCs.                                               |
 | `apps/web/src/components/ChatView.tsx`                      | `useDelegationBannerItems` spread into the composer banner list      | Shows "Delegated by …" on a delegate's thread and running delegates on the delegating thread.    |
 | `apps/web/src/components/settings/IntegrationsSettings.tsx` | Render `DelegationSettingsSection`                                   | The on/off switch and limits live in Settings → Integrations → Delegation.                       |
-| `apps/web/src/components/settings/settingsSearch.ts`        | Six `delegation*` search items                                       | Settings search only reaches rows registered in its catalog.                                     |
+| `apps/web/src/components/settings/settingsSearch.ts`        | Seven `delegation*` search items                                     | Settings search only reaches rows registered in its catalog.                                     |
 | `docs/README.md`                                            | Link to `user/delegation.md`                                         | User guide index.                                                                                |
 
 ## Rules for fork changes

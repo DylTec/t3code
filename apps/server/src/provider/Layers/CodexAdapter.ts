@@ -2334,6 +2334,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
                   "-c",
                   'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                  // Fork: a blocking delegate_agent call waits up to an hour;
+                  // Codex's 60s default would abandon it. See docs/fork-maintenance.md.
+                  "-c",
+                  "mcp_servers.t3-code.tool_timeout_sec=3900",
                 ],
                 mcpCapabilities: mcpSession.capabilities,
               }

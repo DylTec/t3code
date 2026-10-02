@@ -585,6 +585,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["delegate agents subagent hand off codex claude opencode another provider mcp"],
   },
   {
+    id: "delegation-profiles",
+    title: "Worker profiles",
+    to: "/settings/integrations",
+    scope: "environment-defaults",
+    searchTerms: ["delegation subagent orchestrator worker reviewer explorer model provider"],
+  },
+  {
+    id: "delegation-require-profile",
+    title: "Only delegate to profiles",
+    to: "/settings/integrations",
+    scope: "environment-defaults",
+    searchTerms: ["delegation restrict profiles provider deny"],
+  },
+  {
     id: "delegation-concurrency",
     title: "Delegates per thread",
     to: "/settings/integrations",

@@ -585,6 +585,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["delegate agents subagent hand off codex claude opencode another provider mcp"],
   },
   {
+    id: "delegation-roles",
+    title: "Delegation roles",
+    to: "/settings/integrations",
+    scope: "environment-defaults",
+    searchTerms: [
+      "delegation standard roles reviewer implementer researcher debugger test author security architect performance preferred providers",
+    ],
+  },
+  {
     id: "delegation-profiles",
     title: "Worker profiles",
     to: "/settings/integrations",

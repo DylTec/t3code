@@ -65,12 +65,11 @@ export function moveProfile(
   name: string,
   offset: -1 | 1,
 ): ReadonlyArray<DelegationProfile> {
-  const from = profiles.findIndex((profile) => profile.name === name);
-  const to = from + offset;
-  if (from === -1 || to < 0 || to >= profiles.length) return profiles;
-  const next = [...profiles];
-  [next[from], next[to]] = [next[to]!, next[from]!];
-  return next;
+  return moveItem(
+    profiles,
+    profiles.findIndex((profile) => profile.name === name),
+    offset,
+  );
 }
 
 /** "codex · gpt-6 · read-only" style summary for a profile row. */
@@ -81,4 +80,17 @@ export function profileSummary(profile: DelegationProfile): string {
     profile.access,
     ...(profile.workspace === "worktree" ? ["own worktree"] : []),
   ].join(" · ");
+}
+
+/** Move the item at `index` one place up or down; out-of-range moves return the list unchanged. */
+export function moveItem<T>(
+  items: ReadonlyArray<T>,
+  index: number,
+  offset: -1 | 1,
+): ReadonlyArray<T> {
+  const to = index + offset;
+  if (index < 0 || index >= items.length || to < 0 || to >= items.length) return items;
+  const next = [...items];
+  [next[index], next[to]] = [next[to]!, next[index]!];
+  return next;
 }

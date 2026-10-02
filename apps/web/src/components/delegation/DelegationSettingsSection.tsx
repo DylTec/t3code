@@ -1,8 +1,14 @@
 import {
+  DEFAULT_DELEGATION_ROLE_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
+  DELEGATION_ROLE_DESCRIPTIONS,
+  DELEGATION_ROLES,
   type DelegationProfile,
+  type DelegationRole,
   type DelegationSettings,
+  type DelegationSettingsPatch,
 } from "@t3tools/contracts";
+import * as Equal from "effect/Equal";
 import { MoreVertical, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -16,6 +22,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { DelegationProfileEditor } from "./DelegationProfileEditor";
+import { DelegationRoleEditor } from "./DelegationRoleEditor";
 import {
   EMPTY_PROFILE,
   moveProfile,
@@ -118,7 +125,7 @@ function DelegationProfilesRows({
 }: {
   delegation: DelegationSettings;
   disabled: boolean;
-  update: (patch: Partial<DelegationSettings>) => void;
+  update: (patch: DelegationSettingsPatch) => void;
 }) {
   const { environment } = useSettingsScope();
   const providers = environment?.serverConfig?.providers ?? [];
@@ -200,12 +207,87 @@ function DelegationProfilesRows({
   );
 }
 
+/** The standard roles' default access and provider preferences. */
+function DelegationRolesRows({
+  delegation,
+  disabled,
+  update,
+}: {
+  delegation: DelegationSettings;
+  disabled: boolean;
+  update: (patch: DelegationSettingsPatch) => void;
+}) {
+  const { environment } = useSettingsScope();
+  const providers = environment?.serverConfig?.providers ?? [];
+  const [editing, setEditing] = useState<DelegationRole | null>(null);
+  return (
+    <SettingsRow
+      {...searchableSetting("delegation-roles")}
+      serverScoped
+      settingKeys={["delegation"]}
+      description="When an agent gives one of these roles and no provider, T3 Code uses the role's first available preferred provider and default access. Agents can still name a provider."
+    >
+      <div className="pt-3 pb-2">
+        {DELEGATION_ROLES.map((role) => {
+          const settings = delegation.roles[role];
+          const customized = !Equal.equals(settings, DEFAULT_DELEGATION_ROLE_SETTINGS[role]);
+          return (
+            <div key={role} className="flex items-center gap-2 border-t border-border/50 py-2.5">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">
+                  {role}
+                  {customized ? (
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">
+                      customized
+                    </span>
+                  ) : null}
+                </p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {DELEGATION_ROLE_DESCRIPTIONS[role]}
+                </p>
+                <p className="truncate font-mono text-xs text-muted-foreground">
+                  {settings.access} ·{" "}
+                  {settings.preferredProviders.length === 0
+                    ? "no preferred providers"
+                    : settings.preferredProviders.join(" → ")}
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={disabled}
+                aria-label={`Edit ${role}`}
+                onClick={() => setEditing(role)}
+              >
+                Edit
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+      {editing ? (
+        <DelegationRoleEditor
+          key={editing}
+          role={editing}
+          settings={delegation.roles[editing]}
+          providers={providers}
+          onClose={() => setEditing(null)}
+          onSave={(settings) => {
+            update({ roles: { [editing]: settings } });
+            setEditing(null);
+          }}
+        />
+      ) : null}
+    </SettingsRow>
+  );
+}
+
 export function DelegationSettingsSection() {
   const { scope } = useSettingsScope();
   const delegation = useScopedSettings((settings) => settings.delegation);
   const updateSettings = useUpdateScopedSettings();
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
-  const update = (patch: Partial<DelegationSettings>) => updateSettings({ delegation: patch });
+  const update = (patch: DelegationSettingsPatch) => updateSettings({ delegation: patch });
 
   return (
     <SettingsSection id="delegation" title="Delegation">
@@ -266,6 +348,11 @@ export function DelegationSettingsSection() {
           />
         );
       })}
+      <DelegationRolesRows
+        delegation={delegation}
+        disabled={projectScope || !delegation.enabled}
+        update={update}
+      />
       <DelegationProfilesRows
         delegation={delegation}
         disabled={projectScope || !delegation.enabled}

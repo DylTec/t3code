@@ -1,0 +1,75 @@
+# Fork-owned. See docs/fork-maintenance.md.
+#
+# Merges upstream T3 Code into the delegation branch in a throwaway checkout and
+# runs the checks that cover the fork's upstream edits, so a breaking upstream
+# change shows up before the next manual sync.
+name: Upstream compatibility
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+  push:
+    branches:
+      - "feature/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  merge-and-check:
+    name: Merge upstream and check
+    if: github.repository != 'pingdotgg/t3code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'feature/cross-agent-orchestration' || github.ref }}
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Merge upstream/main
+        run: |
+          git config user.name "upstream-compat"
+          git config user.email "upstream-compat@users.noreply.github.com"
+          git remote add upstream https://github.com/pingdotgg/t3code.git
+          git fetch --no-tags upstream main
+          if ! git merge --no-edit upstream/main; then
+            echo "::error::upstream/main no longer merges cleanly. Conflicting files:"
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Typecheck affected packages
+        run: |
+          for package in packages/contracts packages/client-runtime apps/server apps/web; do
+            echo "::group::$package"
+            (cd "$package" && npx tsc --noEmit)
+            echo "::endgroup::"
+          done
+
+      - name: Test delegation and the upstream code it touches
+        run: >
+          vp test run
+          apps/server/src/delegation
+          apps/server/src/mcp
+          apps/server/src/auth
+          apps/server/src/serverSettings.test.ts
+          packages/contracts/src
+          apps/web/src/components/settings/settingsSearch.test.ts

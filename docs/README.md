@@ -14,6 +14,7 @@
 - [SnapShots](./user/snap-shot.md)
 - [Import browser sessions](./user/browser-import.md)
 - [Devices](./user/devices.md)
+- [Delegation](./user/delegation.md) <!-- Fork: cross-agent delegation. See fork-maintenance.md. -->
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)

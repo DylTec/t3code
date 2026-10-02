@@ -19,7 +19,7 @@ import {
   DelegationError,
   type DelegationExecutionMode,
   DelegationId,
-  type DelegationTarget,
+  type DelegationTargets,
   type DelegationThreadSnapshot,
   type DelegationWorkspaceMode,
   type DelegationFailure,
@@ -63,8 +63,10 @@ import * as DelegationRepository from "./DelegationRepository.ts";
 
 export interface DelegateRequest {
   readonly parentThreadId: ThreadId;
-  /** A provider instance id or driver kind. */
-  readonly provider: string;
+  /** A worker profile from settings; fixes every field it sets. */
+  readonly profile?: string | undefined;
+  /** A provider instance id or driver kind. Required without a profile. */
+  readonly provider?: string | undefined;
   readonly model?: string | undefined;
   readonly task: string;
   readonly role?: string | undefined;
@@ -98,9 +100,8 @@ export interface DelegationServiceShape {
   readonly streamThread: (
     threadId: ThreadId,
   ) => Stream.Stream<DelegationThreadSnapshot, DelegationError>;
-  readonly listTargets: Effect.Effect<ReadonlyArray<DelegationTarget>>;
-  /** Whether the user has delegation turned on. */
-  readonly enabled: Effect.Effect<boolean>;
+  /** The user's profiles and the provider instances, with whether each can take work. */
+  readonly listTargets: Effect.Effect<DelegationTargets, DelegationError>;
   /** Waits until every domain event received so far has been handled. Tests only. */
   readonly drain: Effect.Effect<void>;
 }
@@ -524,16 +525,18 @@ export const make = Effect.gen(function* () {
         onNone: () => 1,
         onSome: (delegation) => delegation.depth + 1,
       });
+      const choice = DelegationPolicy.resolveChoice(request, settings);
+      if (DelegationPolicy.isDelegationError(choice)) return yield* Effect.fail(choice);
       const providerSnapshots = yield* providers.getProviders;
-      const target = DelegationPolicy.resolveTargetProvider(request.provider, providerSnapshots);
+      const target = DelegationPolicy.resolveTargetProvider(choice.provider, providerSnapshots);
       if (DelegationPolicy.isDelegationError(target)) return yield* Effect.fail(target);
-      const model = DelegationPolicy.resolveModel(target, request.model);
+      const model = DelegationPolicy.resolveModel(target, choice.model);
       if (DelegationPolicy.isDelegationError(model)) return yield* Effect.fail(model);
-      const access = request.access ?? "read-only";
-      const workspaceMode = request.workspace ?? (access === "write" ? "worktree" : "current");
+      const access = choice.access ?? "read-only";
+      const workspaceMode = choice.workspace ?? (access === "write" ? "worktree" : "current");
       const parentTurnId = parent.latestTurn?.state === "running" ? parent.latestTurn.turnId : null;
-      const role = request.role?.trim() || null;
-      const timeoutMinutes = request.timeoutMinutes ?? settings.defaultTimeoutMinutes;
+      const role = choice.role;
+      const timeoutMinutes = choice.timeoutMinutes ?? settings.defaultTimeoutMinutes;
 
       // Admission and reservation happen under the lock so concurrent requests
       // cannot both take the last slot. Slow work (worktree, dispatch) does not.
@@ -572,11 +575,12 @@ export const make = Effect.gen(function* () {
             parentThreadId: parent.id,
             parentTurnId,
             childThreadId: ThreadId.make(yield* uuid),
-            requestedProvider: request.provider,
+            requestedProvider: choice.provider,
             providerInstanceId: target.instanceId,
             driver: target.driver,
             model,
             role,
+            profile: choice.profile?.name ?? null,
             task: request.task,
             access,
             workspaceMode,
@@ -602,6 +606,7 @@ export const make = Effect.gen(function* () {
         providerInstanceId: t.delegation.providerInstanceId,
         model: t.delegation.model,
         role: t.delegation.role ?? "",
+        profile: t.delegation.profile ?? "",
         access,
         workspaceMode,
         depth,
@@ -660,6 +665,7 @@ export const make = Effect.gen(function* () {
               workspaceMode,
               parentThreadTitle: parent.title,
               parentProvider: parentProviderName,
+              instructions: choice.profile?.instructions,
             }),
             attachments: [],
           },
@@ -759,8 +765,18 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const listTargets: DelegationServiceShape["listTargets"] = providers.getProviders.pipe(
-    Effect.map((snapshots) => snapshots.map(DelegationPolicy.toDelegationTarget)),
+  const listTargets: DelegationServiceShape["listTargets"] = Effect.all({
+    settings: readSettings,
+    snapshots: providers.getProviders,
+  }).pipe(
+    Effect.map(({ settings, snapshots }) => ({
+      enabled: settings.enabled,
+      requireProfile: settings.requireProfile,
+      profiles: settings.profiles.map((profile) =>
+        DelegationPolicy.toProfileTarget(profile, snapshots),
+      ),
+      providers: snapshots.map(DelegationPolicy.toDelegationTarget),
+    })),
   );
 
   /**
@@ -827,10 +843,6 @@ export const make = Effect.gen(function* () {
     threadSnapshot,
     streamThread,
     listTargets,
-    enabled: readSettings.pipe(
-      Effect.map((settings) => settings.enabled),
-      Effect.orElseSucceed(() => false),
-    ),
     drain: worker.drain,
   });
 });

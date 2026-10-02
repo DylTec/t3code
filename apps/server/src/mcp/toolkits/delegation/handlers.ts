@@ -37,6 +37,7 @@ export function toDelegationToolResult(delegation: Delegation): DelegationToolRe
     driver: delegation.driver,
     model: delegation.model,
     role: delegation.role,
+    profile: delegation.profile,
     access: delegation.access,
     workspace: delegation.workspaceMode,
     status: delegation.status,
@@ -86,6 +87,7 @@ const make = Effect.gen(function* () {
         const executionMode = input.mode ?? "blocking";
         const started = yield* delegations.delegate({
           parentThreadId: scope.threadId,
+          profile: input.profile,
           provider: input.provider,
           model: input.model,
           task: input.task,
@@ -110,6 +112,7 @@ const make = Effect.gen(function* () {
           delegations
             .delegate({
               parentThreadId: scope.threadId,
+              profile: entry.profile,
               provider: entry.provider,
               model: entry.model,
               task:
@@ -127,7 +130,11 @@ const make = Effect.gen(function* () {
           index: number,
         ): Effect.Effect<DelegateManyResult["results"][number], DelegationError> => {
           const entry = input.delegates[index]!;
-          const base = { provider: entry.provider, role: entry.role ?? null };
+          const base = {
+            profile: entry.profile ?? null,
+            provider: entry.provider ?? null,
+            role: entry.role ?? null,
+          };
           if (Result.isFailure(outcome)) {
             const { code, detail } = outcome.failure;
             return Effect.succeed({ ...base, delegation: null, error: { code, detail } });
@@ -181,9 +188,11 @@ const make = Effect.gen(function* () {
     list_delegation_targets: () =>
       Effect.gen(function* () {
         const delegations = yield* requireService;
+        const { profiles, ...targets } = yield* delegations.listTargets;
+        // Standing instructions go to the delegate, not the agent choosing one.
         return {
-          enabled: yield* delegations.enabled,
-          targets: yield* delegations.listTargets,
+          ...targets,
+          profiles: profiles.map(({ instructions: _instructions, ...profile }) => profile),
         };
       }),
   });

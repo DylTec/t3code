@@ -253,6 +253,49 @@ describe("DelegationService", () => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
+  it.effect("starts a worker profile with its model, access and standing instructions", () =>
+    Effect.gen(function* () {
+      yield* setupParent();
+      const service = yield* DelegationService;
+      const started = yield* service.delegate(
+        request({ provider: undefined, role: undefined, profile: "reviewer" }),
+      );
+      assert.strictEqual(started.profile, "reviewer");
+      assert.strictEqual(started.role, "reviewer");
+      assert.strictEqual(started.providerInstanceId, "codex");
+      assert.strictEqual(started.model, "codex-other");
+      assert.strictEqual(started.access, "read-only");
+
+      const snapshots = yield* ProjectionSnapshotQuery;
+      const child = Option.getOrThrow(yield* snapshots.getThreadDetailById(started.childThreadId));
+      assert.include(child.messages[0]?.text ?? "", "Standing instructions:\nCite file and line.");
+
+      // A profile is persisted with the record.
+      assert.strictEqual((yield* service.get(started.id)).profile, "reviewer");
+      const refused = yield* Effect.flip(
+        service.delegate(request({ profile: "reviewer", access: "write" })),
+      );
+      assert.strictEqual(refused.code, "invalid_request");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          profiles: [
+            {
+              name: "reviewer",
+              description: "Independent code review.",
+              provider: "codex",
+              model: "codex-other",
+              access: "read-only",
+              workspace: null,
+              instructions: "Cite file and line.",
+              timeoutMinutes: null,
+            },
+          ],
+        }),
+      ),
+    ),
+  );
+
   it.effect("refuses to start while delegation is turned off", () =>
     Effect.gen(function* () {
       yield* setupParent();

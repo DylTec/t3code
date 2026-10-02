@@ -93,8 +93,16 @@ const Migration0001 = Effect.gen(function* () {
   `;
 });
 
+const Migration0002 = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE delegations ADD COLUMN profile TEXT`;
+});
+
 const runDelegationMigrations = Migrator.make({})({
-  loader: Migrator.fromRecord({ "1_Delegations": Migration0001 }),
+  loader: Migrator.fromRecord({
+    "1_Delegations": Migration0001,
+    "2_DelegationProfile": Migration0002,
+  }),
   table: MIGRATIONS_TABLE,
 });
 
@@ -108,6 +116,7 @@ const DelegationRow = Schema.Struct({
   driver: ProviderDriverKind,
   model: Schema.String,
   role: Schema.NullOr(Schema.String),
+  profile: Schema.NullOr(Schema.String),
   task: Schema.String,
   access: DelegationAccess,
   workspaceMode: DelegationWorkspaceMode,
@@ -150,6 +159,7 @@ const selectColumns = (sql: SqlClient.SqlClient) => sql`
     driver,
     model,
     role,
+    profile,
     task,
     access,
     workspace_mode AS "workspaceMode",
@@ -184,14 +194,14 @@ export const make = Effect.gen(function* () {
     execute: (row) => sql`
       INSERT INTO delegations (
         id, parent_thread_id, parent_turn_id, child_thread_id, requested_provider,
-        provider_instance_id, driver, model, role, task, access, workspace_mode,
+        provider_instance_id, driver, model, role, profile, task, access, workspace_mode,
         execution_mode, depth, status, created_at, started_at, completed_at, deadline_at, result,
         failure_code, failure_message
       )
       VALUES (
         ${row.id}, ${row.parentThreadId}, ${row.parentTurnId}, ${row.childThreadId},
         ${row.requestedProvider}, ${row.providerInstanceId}, ${row.driver}, ${row.model},
-        ${row.role}, ${row.task}, ${row.access}, ${row.workspaceMode}, ${row.executionMode},
+        ${row.role}, ${row.profile}, ${row.task}, ${row.access}, ${row.workspaceMode}, ${row.executionMode},
         ${row.depth}, ${row.status}, ${row.createdAt}, ${row.startedAt}, ${row.completedAt},
         ${row.deadlineAt}, ${row.result}, ${row.failureCode}, ${row.failureMessage}
       )

@@ -8,6 +8,8 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   type DelegationAccess,
   DelegationError,
+  type DelegationProfile,
+  type DelegationProfileTarget,
   type DelegationSettings,
   type DelegationTarget,
   type DelegationWorkspaceMode,
@@ -107,6 +109,121 @@ export function resolveTargetProvider(
     code: "provider_unavailable",
     detail: `Provider '${first.instanceId}' cannot take work: ${unavailableReason(first)}`,
   });
+}
+
+/** One line per profile, for errors that ask the agent to pick one. */
+function profileMenu(profiles: ReadonlyArray<DelegationProfile>): string {
+  return profiles.length === 0
+    ? "The user has not set up any profiles."
+    : `Profiles: ${profiles.map((profile) => `${profile.name} (${profile.description})`).join("; ")}.`;
+}
+
+export interface DelegationChoice {
+  readonly profile?: string | undefined;
+  readonly provider?: string | undefined;
+  readonly model?: string | undefined;
+  readonly access?: DelegationAccess | undefined;
+  readonly workspace?: DelegationWorkspaceMode | undefined;
+  readonly role?: string | undefined;
+  readonly timeoutMinutes?: number | undefined;
+}
+
+export interface ResolvedChoice {
+  readonly profile: DelegationProfile | null;
+  readonly provider: string;
+  readonly model: string | undefined;
+  readonly access: DelegationAccess | undefined;
+  readonly workspace: DelegationWorkspaceMode | undefined;
+  readonly role: string | null;
+  readonly timeoutMinutes: number | undefined;
+}
+
+/**
+ * Apply the named profile to a request. Every field the profile sets is fixed:
+ * a request that names a different value is refused rather than silently
+ * overridden, so an agent cannot widen a read-only worker's access.
+ */
+export function resolveChoice(
+  request: DelegationChoice,
+  settings: DelegationSettings,
+): ResolvedChoice | DelegationError {
+  const role = request.role?.trim() || null;
+  if (request.profile === undefined) {
+    if (settings.requireProfile) {
+      return new DelegationError({
+        code: "profile_required",
+        detail: `T3 Code settings only allow delegating to a profile. ${profileMenu(settings.profiles)}`,
+      });
+    }
+    if (request.provider === undefined) {
+      return new DelegationError({
+        code: "invalid_request",
+        detail: `Name a profile or a provider. ${profileMenu(settings.profiles)}`,
+      });
+    }
+    return {
+      profile: null,
+      provider: request.provider,
+      model: request.model,
+      access: request.access,
+      workspace: request.workspace,
+      role,
+      timeoutMinutes: request.timeoutMinutes,
+    };
+  }
+  const name = request.profile.trim().toLowerCase();
+  const profile = settings.profiles.find((candidate) => candidate.name === name);
+  if (profile === undefined) {
+    return new DelegationError({
+      code: "profile_not_found",
+      detail: `No profile named '${request.profile}'. ${profileMenu(settings.profiles)}`,
+    });
+  }
+  const same = (left: string, right: string) =>
+    left.trim().toLowerCase() === right.trim().toLowerCase();
+  const conflicts = [
+    request.provider !== undefined && !same(request.provider, profile.provider) && "provider",
+    request.model !== undefined &&
+      profile.model !== null &&
+      request.model !== profile.model &&
+      "model",
+    request.access !== undefined && request.access !== profile.access && "access",
+    request.workspace !== undefined &&
+      profile.workspace !== null &&
+      request.workspace !== profile.workspace &&
+      "workspace",
+  ].filter((field) => field !== false);
+  if (conflicts.length > 0) {
+    return new DelegationError({
+      code: "invalid_request",
+      detail: `Profile '${profile.name}' fixes ${conflicts.join(", ")}. Omit ${conflicts.length === 1 ? "it" : "them"}, or choose another profile.`,
+    });
+  }
+  return {
+    profile,
+    provider: profile.provider,
+    model: profile.model ?? request.model,
+    access: profile.access,
+    workspace: profile.workspace ?? request.workspace,
+    role: role ?? profile.name,
+    timeoutMinutes: request.timeoutMinutes ?? profile.timeoutMinutes ?? undefined,
+  };
+}
+
+/** A profile with the instance it would run on now, or why it cannot run. */
+export function toProfileTarget(
+  profile: DelegationProfile,
+  providers: ReadonlyArray<ServerProvider>,
+): DelegationProfileTarget {
+  const target = resolveTargetProvider(profile.provider, providers);
+  return isDelegationError(target)
+    ? { ...profile, providerInstanceId: null, available: false, unavailableReason: target.detail }
+    : {
+        ...profile,
+        providerInstanceId: target.instanceId,
+        available: true,
+        unavailableReason: null,
+      };
 }
 
 export function resolveModel(
@@ -209,6 +326,8 @@ export function buildChildPrompt(input: {
   readonly workspaceMode: DelegationWorkspaceMode;
   readonly parentThreadTitle: string;
   readonly parentProvider: string | null;
+  /** The profile's standing instructions, if any. */
+  readonly instructions?: string | undefined;
 }): string {
   const delegator = input.parentProvider
     ? `a ${input.parentProvider} agent in the T3 Code thread "${input.parentThreadTitle}"`
@@ -228,6 +347,9 @@ export function buildChildPrompt(input: {
     `Access: ${access}`,
     `Workspace: ${workspace}`,
     "",
+    ...(input.instructions?.trim()
+      ? ["Standing instructions:", input.instructions.trim(), ""]
+      : []),
     "Task:",
     input.task.trim(),
     "",

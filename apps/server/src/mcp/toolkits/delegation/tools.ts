@@ -33,10 +33,18 @@ const DelegationIdInput = TrimmedNonEmptyString.annotate({
 });
 
 const DelegateAgentInput = Schema.Struct({
-  provider: TrimmedNonEmptyString.annotate({
-    description:
-      "Which agent to delegate to: a providerInstanceId from list_delegation_targets, or a driver kind such as codex, claudeAgent (or claude), opencode, cursor. Prefer a different provider than your own for independent review.",
-  }),
+  profile: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "A worker profile name from list_delegation_targets. Preferred: the user set each profile up for a kind of work, with its provider, model, access and standing instructions. Fields a profile sets cannot be overridden.",
+    }),
+  ),
+  provider: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "Only when no profile fits: a providerInstanceId from list_delegation_targets, or a driver kind such as codex, claudeAgent (or claude), opencode, cursor. Prefer a different provider than your own for independent review.",
+    }),
+  ),
   task: TrimmedNonEmptyString.annotate({
     description:
       "The complete task. The delegate starts with no memory of this conversation, so include the goal, relevant files or commits, constraints, and what its final answer should contain.",
@@ -86,6 +94,7 @@ export const DelegationToolResult = Schema.Struct({
   driver: Schema.String,
   model: Schema.String,
   role: Schema.NullOr(Schema.String),
+  profile: Schema.NullOr(Schema.String),
   access: DelegationAccess,
   workspace: DelegationWorkspaceMode,
   status: DelegationStatus,
@@ -121,16 +130,33 @@ const DelegationTargetEntry = Schema.Struct({
   models: Schema.Array(Schema.String),
 });
 
+const DelegationProfileEntry = Schema.Struct({
+  name: Schema.String,
+  description: Schema.String.annotate({ description: "When to use this worker." }),
+  provider: Schema.String,
+  providerInstanceId: Schema.NullOr(Schema.String),
+  model: Schema.NullOr(Schema.String),
+  access: DelegationAccess,
+  workspace: Schema.NullOr(DelegationWorkspaceMode),
+  timeoutMinutes: Schema.NullOr(Schema.Int),
+  available: Schema.Boolean,
+  unavailableReason: Schema.NullOr(Schema.String),
+});
+
 const ListDelegationTargetsResult = Schema.Struct({
   enabled: Schema.Boolean.annotate({
     description: "False when the user has delegation turned off; delegate_agent will refuse.",
   }),
-  targets: Schema.Array(DelegationTargetEntry),
+  requireProfile: Schema.Boolean.annotate({
+    description: "True when delegations must name a profile rather than a provider.",
+  }),
+  profiles: Schema.Array(DelegationProfileEntry),
+  providers: Schema.Array(DelegationTargetEntry),
 });
 export type ListDelegationTargetsResult = typeof ListDelegationTargetsResult.Type;
 
 const DelegateAgentTool = Tool.make("delegate_agent", {
-  description: `Delegate a task to another coding agent (Codex, Claude Code, OpenCode, ...) managed by T3 Code. The delegate runs in its own T3 Code thread the user can watch, using that provider's own sign-in and subscription. Use it for an independent review of your changes, a second opinion, research, or parallel work. By default it blocks until the delegate finishes and returns its final message. ${UNTRUSTED_RESULT}`,
+  description: `Delegate a task to another coding agent (Codex, Claude Code, OpenCode, ...) managed by T3 Code. The delegate runs in its own T3 Code thread the user can watch, using that provider's own sign-in and subscription. Use it for an independent review of your changes, a second opinion, research, or parallel work. Call list_delegation_targets first and pick the worker profile whose description fits the work; name a provider only when no profile fits. By default it blocks until the delegate finishes and returns its final message. ${UNTRUSTED_RESULT}`,
   parameters: DelegateAgentInput,
   success: DelegationToolResult,
   failure: DelegationError,
@@ -200,7 +226,7 @@ const CancelDelegationTool = Tool.make("cancel_delegation", {
 
 const ListDelegationTargetsTool = Tool.make("list_delegation_targets", {
   description:
-    "List the provider instances this thread can delegate to, whether each is signed in and available, and their models.",
+    "List the worker profiles the user set up, each with when to use it and the provider, model and access it runs with, followed by the provider instances this thread can delegate to and their models. Call this before delegating.",
   success: ListDelegationTargetsResult,
   failure: DelegationError,
   dependencies,
@@ -218,6 +244,7 @@ const DelegateManyInput = Schema.Struct({
   }),
   delegates: Schema.Array(
     Schema.Struct({
+      profile: DelegateAgentInput.fields.profile,
       provider: DelegateAgentInput.fields.provider,
       role: DelegateAgentInput.fields.role,
       model: DelegateAgentInput.fields.model,
@@ -230,7 +257,9 @@ const DelegateManyInput = Schema.Struct({
     }),
   )
     .check(Schema.isMinLength(1), Schema.isMaxLength(8))
-    .annotate({ description: "One entry per delegate, 1 to 8." }),
+    .annotate({
+      description: "One entry per delegate, 1 to 8. Each names a profile or a provider.",
+    }),
   access: DelegateAgentInput.fields.access,
   workspace: DelegateAgentInput.fields.workspace,
   timeoutMinutes: DelegateAgentInput.fields.timeoutMinutes,
@@ -241,7 +270,8 @@ export type DelegateManyInput = typeof DelegateManyInput.Type;
 export const DelegateManyResult = Schema.Struct({
   results: Schema.Array(
     Schema.Struct({
-      provider: Schema.String,
+      profile: Schema.NullOr(Schema.String),
+      provider: Schema.NullOr(Schema.String),
       role: Schema.NullOr(Schema.String),
       delegation: Schema.NullOr(DelegationToolResult),
       /** Why this delegate could not start; the others still ran. */
@@ -252,7 +282,7 @@ export const DelegateManyResult = Schema.Struct({
 export type DelegateManyResult = typeof DelegateManyResult.Type;
 
 const DelegateManyTool = Tool.make("delegate_many", {
-  description: `Run one task on several agents in parallel, for example independent reviews from Codex and OpenCode, and wait for all of them. Each delegate gets its own T3 Code thread. Results come back side by side without being merged; compare them yourself. A delegate that cannot start reports an error without stopping the others. ${UNTRUSTED_RESULT}`,
+  description: `Run one task on several agents in parallel, for example independent reviews from two worker profiles, and wait for all of them. Each delegate gets its own T3 Code thread. Results come back side by side without being merged; compare them yourself. A delegate that cannot start reports an error without stopping the others. ${UNTRUSTED_RESULT}`,
   parameters: DelegateManyInput,
   success: DelegateManyResult,
   failure: DelegationError,

@@ -81,6 +81,103 @@ describe("resolveTargetProvider", () => {
   });
 });
 
+describe("resolveChoice", () => {
+  const settings = decodeSettings({
+    enabled: true,
+    profiles: [
+      {
+        name: "reviewer",
+        description: "Independent code review.",
+        provider: "codex",
+        model: "codex-other",
+        instructions: "Report findings by severity.",
+        timeoutMinutes: 30,
+      },
+      { name: "implementer", description: "Scoped changes.", provider: "claude", access: "write" },
+    ],
+  });
+
+  it("takes provider, model, access and timeout from the profile and names the role after it", () => {
+    const choice = DelegationPolicy.resolveChoice({ profile: "Reviewer" }, settings);
+    expect(choice).toMatchObject({
+      provider: "codex",
+      model: "codex-other",
+      access: "read-only",
+      role: "reviewer",
+      timeoutMinutes: 30,
+      profile: { instructions: "Report findings by severity." },
+    });
+  });
+
+  it("leaves fields the profile does not set to the request", () => {
+    const choice = DelegationPolicy.resolveChoice(
+      { profile: "implementer", model: "claude-big", role: "migrator", timeoutMinutes: 5 },
+      settings,
+    );
+    expect(choice).toMatchObject({
+      provider: "claude",
+      model: "claude-big",
+      access: "write",
+      role: "migrator",
+      timeoutMinutes: 5,
+    });
+  });
+
+  it("refuses a request that contradicts the profile instead of overriding it", () => {
+    const choice = DelegationPolicy.resolveChoice(
+      { profile: "reviewer", access: "write", provider: "claude" },
+      settings,
+    );
+    expect(DelegationPolicy.isDelegationError(choice) && choice.code).toBe("invalid_request");
+    expect(DelegationPolicy.isDelegationError(choice) && choice.detail).toContain(
+      "fixes provider, access",
+    );
+    // Restating the profile's own values is fine.
+    expect(
+      DelegationPolicy.resolveChoice({ profile: "reviewer", provider: "Codex" }, settings),
+    ).toMatchObject({ provider: "codex" });
+  });
+
+  it("lists the profiles when a name is unknown or a profile is required", () => {
+    const unknown = DelegationPolicy.resolveChoice({ profile: "tester" }, settings);
+    expect(DelegationPolicy.isDelegationError(unknown) && unknown.code).toBe("profile_not_found");
+    expect(DelegationPolicy.isDelegationError(unknown) && unknown.detail).toContain(
+      "reviewer (Independent code review.)",
+    );
+    const required = DelegationPolicy.resolveChoice(
+      { provider: "codex" },
+      { ...settings, requireProfile: true },
+    );
+    expect(DelegationPolicy.isDelegationError(required) && required.code).toBe("profile_required");
+  });
+
+  it("needs a profile or a provider", () => {
+    const choice = DelegationPolicy.resolveChoice({}, settings);
+    expect(DelegationPolicy.isDelegationError(choice) && choice.code).toBe("invalid_request");
+    expect(DelegationPolicy.resolveChoice({ provider: "codex" }, settings)).toMatchObject({
+      provider: "codex",
+      profile: null,
+      role: null,
+    });
+  });
+});
+
+describe("toProfileTarget", () => {
+  it("reports the instance a profile runs on, or why it cannot run", () => {
+    const [reviewer] = decodeSettings({
+      profiles: [{ name: "reviewer", description: "Review.", provider: "codex" }],
+    }).profiles;
+    expect(DelegationPolicy.toProfileTarget(reviewer!, [codexProvider])).toMatchObject({
+      providerInstanceId: "codex",
+      available: true,
+    });
+    expect(DelegationPolicy.toProfileTarget(reviewer!, [claudeProvider])).toMatchObject({
+      providerInstanceId: null,
+      available: false,
+    });
+  });
+});
+
 describe("resolveModel", () => {
   it("uses an explicit model, then the provider's default", () => {
     expect(DelegationPolicy.resolveModel(codexProvider, "gpt-x")).toBe("gpt-x");
@@ -161,6 +258,20 @@ describe("child thread content", () => {
     expect(prompt).toContain("Access: Read-only.");
     expect(prompt).toContain("Review the current diff.");
     expect(prompt).toContain("returned verbatim to the delegating agent");
+    expect(prompt).not.toContain("Standing instructions");
+  });
+
+  it("adds a profile's standing instructions ahead of the task", () => {
+    const prompt = DelegationPolicy.buildChildPrompt({
+      task: "Review the current diff.",
+      role: "reviewer",
+      access: "read-only",
+      workspaceMode: "current",
+      parentThreadTitle: "Implement OAuth refresh",
+      parentProvider: null,
+      instructions: "Report findings by severity.",
+    });
+    expect(prompt).toMatch(/Standing instructions:\nReport findings by severity\.\n\nTask:/);
   });
 });
 

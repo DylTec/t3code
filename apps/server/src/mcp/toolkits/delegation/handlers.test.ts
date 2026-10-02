@@ -40,6 +40,7 @@ const makeDelegation = (overrides: Partial<Delegation> = {}): Delegation => ({
   driver: ProviderDriverKind.make("codex"),
   model: "gpt-6-astra",
   role: "reviewer",
+  profile: null,
   task: "Review the diff.",
   access: "read-only",
   workspaceMode: "current",
@@ -74,8 +75,26 @@ const makeHarness = Effect.fn("makeDelegationToolkitHarness")(function* (
     cancel: () => Effect.succeed({ ...stored, status: "cancelled" as const }),
     threadSnapshot: () => Effect.succeed({ threadId: PARENT, parent: null, children: [stored] }),
     streamThread: () => Stream.empty,
-    listTargets: Effect.succeed([]),
-    enabled: Effect.succeed(true),
+    listTargets: Effect.succeed({
+      enabled: true,
+      requireProfile: false,
+      profiles: [
+        {
+          name: "reviewer",
+          description: "Independent code review.",
+          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          model: null,
+          access: "read-only" as const,
+          workspace: null,
+          instructions: "Report findings by severity.",
+          timeoutMinutes: null,
+          available: true,
+          unavailableReason: null,
+        },
+      ],
+      providers: [],
+    }),
   });
   const toolkit = yield* DelegationToolkit.pipe(
     Effect.provide(DelegationToolkitHandlersLive.pipe(Layer.provide(service))),
@@ -149,6 +168,23 @@ describe("delegation toolkit handlers", () => {
         "background",
       ]);
       expect(requests[0]?.task).toBe("Review the diff.\n\nFocus: Error handling.");
+    }),
+  );
+
+  it.effect("offers profiles by name and description without their standing instructions", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const targets = yield* harness.call("list_delegation_targets", {});
+      expect(targets.profiles).toEqual([
+        expect.objectContaining({ name: "reviewer", description: "Independent code review." }),
+      ]);
+      expect(targets.profiles[0]).not.toHaveProperty("instructions");
+
+      yield* harness.call("delegate_agent", { profile: "reviewer", task: "Review the diff." });
+      expect((yield* Ref.get(harness.requests)).at(-1)).toMatchObject({
+        profile: "reviewer",
+        provider: undefined,
+      });
     }),
   );
 

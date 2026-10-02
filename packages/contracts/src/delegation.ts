@@ -75,6 +75,8 @@ export const Delegation = Schema.Struct({
   driver: ProviderDriverKind,
   model: TrimmedNonEmptyString,
   role: Schema.NullOr(TrimmedNonEmptyString),
+  /** The worker profile the delegate was started from, if any. */
+  profile: Schema.NullOr(TrimmedNonEmptyString),
   task: Schema.String,
   access: DelegationAccess,
   workspaceMode: DelegationWorkspaceMode,
@@ -112,6 +114,37 @@ const DelegationLimit = (fallback: number, maximum: number) =>
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
 
+const DelegationProfileName = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(40),
+  Schema.isPattern(/^[a-z0-9][a-z0-9_-]*$/),
+);
+
+/**
+ * A named worker the user set up, like an OpenCode subagent: agents pick one
+ * by its description, and every field it sets is fixed for that delegate. A
+ * null model or workspace leaves that choice to the requesting agent.
+ */
+export const DelegationProfile = Schema.Struct({
+  name: DelegationProfileName,
+  /** When to use this worker. Agents choose between profiles by reading it. */
+  description: TrimmedNonEmptyString,
+  /** A provider instance id, or a driver kind such as `codex` or `claudeAgent`. */
+  provider: TrimmedNonEmptyString,
+  model: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  access: DelegationAccess.pipe(Schema.withDecodingDefault(Effect.succeed("read-only" as const))),
+  workspace: Schema.NullOr(DelegationWorkspaceMode).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Standing instructions added to every task this worker receives. */
+  instructions: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  timeoutMinutes: Schema.NullOr(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 240 })),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+});
+export type DelegationProfile = typeof DelegationProfile.Type;
+
 export const DelegationSettings = Schema.Struct({
   /** Off by default so a fresh install behaves exactly like upstream T3 Code. */
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -127,6 +160,13 @@ export const DelegationSettings = Schema.Struct({
   allowedTargets: Schema.Record(ProviderDriverKind, Schema.Array(ProviderDriverKind)).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /**
+   * Named workers, in the order agents see them. An array so a settings patch
+   * replaces the whole list; patches merge objects key by key.
+   */
+  profiles: Schema.Array(DelegationProfile).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Only profiles may be delegated to, never a provider named directly. */
+  requireProfile: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type DelegationSettings = typeof DelegationSettings.Type;
 
@@ -148,6 +188,8 @@ export const DelegationSettingsPatch = Schema.Struct({
   allowedTargets: Schema.optionalKey(
     Schema.Record(ProviderDriverKind, Schema.Array(ProviderDriverKind)),
   ),
+  profiles: Schema.optionalKey(Schema.Array(DelegationProfile)),
+  requireProfile: Schema.optionalKey(Schema.Boolean),
 });
 export type DelegationSettingsPatch = typeof DelegationSettingsPatch.Type;
 
@@ -162,6 +204,8 @@ const DelegationErrorCode = Schema.Literals([
   "provider_not_found",
   "provider_unavailable",
   "provider_not_allowed",
+  "profile_not_found",
+  "profile_required",
   "workspace_unavailable",
   "start_failed",
   "persistence_failed",
@@ -194,10 +238,30 @@ export const DelegationTarget = Schema.Struct({
 });
 export type DelegationTarget = typeof DelegationTarget.Type;
 
+/** A worker profile with the provider instance it resolves to right now. */
+export const DelegationProfileTarget = Schema.Struct({
+  ...DelegationProfile.fields,
+  providerInstanceId: Schema.NullOr(ProviderInstanceId),
+  available: Schema.Boolean,
+  unavailableReason: Schema.NullOr(Schema.String),
+});
+export type DelegationProfileTarget = typeof DelegationProfileTarget.Type;
+
+/** What a thread may delegate to: the user's profiles first, then raw providers. */
+export const DelegationTargets = Schema.Struct({
+  enabled: Schema.Boolean,
+  requireProfile: Schema.Boolean,
+  profiles: Schema.Array(DelegationProfileTarget),
+  providers: Schema.Array(DelegationTarget),
+});
+export type DelegationTargets = typeof DelegationTargets.Type;
+
+/** Name a `profile`, or a `provider` (with any of the fields a profile would fix). */
 export const DelegationCreateInput = Schema.Struct({
   parentThreadId: ThreadId,
+  profile: Schema.optional(TrimmedNonEmptyString),
   /** A provider instance id, or a driver kind such as `codex` or `claudeAgent`. */
-  provider: TrimmedNonEmptyString,
+  provider: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   task: TrimmedNonEmptyString,
   role: Schema.optional(TrimmedNonEmptyString),
@@ -253,7 +317,7 @@ const WsDelegationCancelRpc = Rpc.make(DELEGATION_WS_METHODS.cancel, {
 
 const WsDelegationListTargetsRpc = Rpc.make(DELEGATION_WS_METHODS.listTargets, {
   payload: DelegationThreadInput,
-  success: Schema.Array(DelegationTarget),
+  success: DelegationTargets,
   error: DelegationRpcError,
 });
 
